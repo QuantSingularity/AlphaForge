@@ -183,7 +183,7 @@ export function BacktestPanel({ symbols }: { symbols: SymbolInfo[] }) {
             <Metric label="Trades" value={String(result.metrics.num_trades)} />
           </div>
 
-          <Card title={`Equity Curve — ${result.strategy} on ${result.symbol}`}>
+          <Card title={`Equity Curve - ${result.strategy} on ${result.symbol}`}>
             <ResponsiveContainer width="100%" height={320}>
               <LineChart
                 data={chartData}
