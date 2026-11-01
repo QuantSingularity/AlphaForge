@@ -1,0 +1,218 @@
+# ==========================================================================
+# AlphaForge CI
+#
+# Jobs
+#   1. code_quality        - Python (autoflake, black) and Prettier formatting gate
+#   2. backend_test_build  - C++ backend: CMake build and CTest, then Docker image
+#                            build and container smoke test
+#   3. frontend_test_build - Frontend: Vitest with coverage, then production build
+#
+# Every job waits for code_quality, so formatting problems fail the run before
+# any compiler or package manager is started.
+# ==========================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  # ============================================================
+  # Job 1 -- Code Quality Checks (Python & Prettier)
+  # ============================================================
+  code_quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Pinned so a new Black release cannot change formatting under our feet.
+      - name: Install Python formatters
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install autoflake black==25.11.0
+
+      # Check-only: nothing is rewritten. Covers the data fetch script.
+      - name: Check Python Code Quality
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Running autoflake check ==="
+          autoflake --remove-all-unused-imports --remove-unused-variables --recursive --check .
+          echo "=== Running black check ==="
+          black . --check
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The Solidity plugin lets the same glob below also cover .sol files.
+      - name: Install Global Formatters
+        run: npm install -g prettier prettier-plugin-solidity
+
+      # One Prettier pass over the whole repository (TS/TSX, JSON, HTML, CSS,
+      # Markdown, Solidity and YAML, including this workflow).
+      - name: Run Global Prettier Check
+        shell: bash
+        run: |
+          set -euo pipefail
+          NODE_GLOBAL=$(npm root -g)
+          echo "=== Running Prettier check ==="
+          prettier --plugin="$NODE_GLOBAL/prettier-plugin-solidity/dist/index.js" \
+            --check "**/*.{js,jsx,ts,tsx,json,html,css,md,sol,yml,yaml}"
+
+  # ===========================================================================
+  # Job 2 -- Backend Test & Build (CMake + CTest + Docker image + smoke test)
+  # ===========================================================================
+  backend_test_build:
+    name: Backend Test & Build
+    runs-on: ubuntu-latest
+    needs: code_quality
+    timeout-minutes: 45
+
+    env:
+      BACKEND_DIR: code/backend
+      IMAGE_NAME: alphaforge
+      CONTAINER_NAME: alphaforge-ci
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y g++ cmake
+
+      # Release build of every target: the engine library, the CLI, the REST
+      # server, the benchmarks and the unit test binary.
+      - name: Configure
+        run: cmake -S "${BACKEND_DIR}" -B "${BACKEND_DIR}/build" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build backend
+        run: cmake --build "${BACKEND_DIR}/build" -j
+
+      # CTest runs the unit test binary (market data, portfolio, risk, backtest
+      # and strategy tests) and prints the output of any failing test.
+      - name: Run backend test suite
+        run: cd "${BACKEND_DIR}/build" && ctest --output-on-failure
+
+      # Buildx enables the GitHub Actions layer cache used by the build step.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # push: false + load: true builds the image locally for the smoke test
+      # without publishing it. The Dockerfile fetches market data from Yahoo at
+      # build time and only warns if that fails, so the image still builds
+      # without network access.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Starts the real container and polls /api/health for up to 60 seconds; the
+      # server must answer with status ok.
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          docker run -d --name "${CONTAINER_NAME}" -p 8080:8080 "${IMAGE_NAME}:ci"
+          ready=false
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/health -o health.json; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != true ]; then
+            echo "Server did not become ready in time." >&2
+            docker logs "${CONTAINER_NAME}"
+            exit 1
+          fi
+          cat health.json
+          echo
+          grep -q '"status":"ok"' <(tr -d ' \n' < health.json)
+
+      # Only runs when an earlier step failed, to make the failure diagnosable.
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs "${CONTAINER_NAME}" || true
+
+      # Always clean up, even when the smoke test fails.
+      - name: Stop container
+        if: always()
+        run: docker rm -f "${CONTAINER_NAME}" || true
+
+  # ======================================================================
+  # Job 3 -- Frontend Test & Build (Vitest + coverage + production build)
+  # ======================================================================
+  frontend_test_build:
+    name: Frontend Test & Build
+    runs-on: ubuntu-latest
+    needs: code_quality
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm ci installs exactly what package-lock.json pins.
+      - name: Install dependencies
+        run: npm ci
+
+      # Vitest suite (jsdom): formatting helpers, the API client, the auth
+      # context, route guards, the sign in and sign up pages, and app routing.
+      # Runs before the build so test failures show up first.
+      - name: Run frontend test suite
+        run: npm run test:coverage
+
+      # Uploaded even when tests fail, so coverage is available for debugging.
+      - name: Upload frontend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-report
+          path: frontend/coverage/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # The build type-checks the whole of src/ first (tsc --noEmit), test files
+      # included, then bundles the app with Vite.
+      - name: Build frontend
+        run: npm run build
+
+      # Keeps the production bundle for a week so it can be inspected.
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7

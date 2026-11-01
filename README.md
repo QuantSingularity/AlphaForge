@@ -78,15 +78,15 @@ AlphaForge/
 
 ## Technology Stack
 
-| Area           | Technology                                                                  |
-| :------------- | :-------------------------------------------------------------------------- |
-| Engine         | C++20, CMake                                                                |
-| REST server    | cpp-httplib, nlohmann/json (both vendored under `code/backend/third_party`) |
-| Testing        | A self-written, zero-dependency test framework (22 unit tests)              |
-| Market data    | yfinance (Python), fetched before first use, not bundled                    |
-| Web frontend   | React, TypeScript, Vite, Recharts                                           |
-| Infrastructure | Docker, Docker Compose                                                      |
-| CI/CD          | GitHub Actions                                                              |
+| Area           | Technology                                                                                                                 |
+| :------------- | :------------------------------------------------------------------------------------------------------------------------- |
+| Engine         | C++20, CMake                                                                                                               |
+| REST server    | cpp-httplib, nlohmann/json (both vendored under `code/backend/third_party`)                                                |
+| Testing        | A self-written, zero-dependency C++ test framework (22 unit tests); Vitest and Testing Library for the frontend (95 tests) |
+| Market data    | yfinance (Python), fetched before first use, not bundled                                                                   |
+| Web frontend   | React, TypeScript, Vite, Recharts                                                                                          |
+| Infrastructure | Docker, Docker Compose                                                                                                     |
+| CI/CD          | GitHub Actions                                                                                                             |
 
 ## Architecture
 
@@ -244,14 +244,30 @@ Or run `./alphaforge_tests` directly.
 
 All 22 unit tests pass via CTest. The REST API was exercised end to end against real data, and the built frontend is served by the same C++ server that answers the API.
 
+### Frontend tests
+
+The frontend has its own Vitest suite of 95 tests across 8 files, run with `npm test` from the `frontend` directory (`npm run test:coverage` adds a coverage report):
+
+| Test file                                            | Test count |
+| :--------------------------------------------------- | :--------- |
+| `src/format.test.ts` (number and class helpers)      | 22         |
+| `src/api.test.ts` (REST client, auth header, errors) | 20         |
+| `src/ui.test.tsx` (shared components)                | 13         |
+| `src/auth/AuthContext.test.tsx` (session, sign in)   | 11         |
+| `src/auth/ProtectedRoute.test.tsx` (route guard)     | 3          |
+| `src/pages/SignIn.test.tsx` (sign in form)           | 7          |
+| `src/pages/SignUp.test.tsx` (registration form)      | 9          |
+| `src/App.test.tsx` (routing and redirects)           | 10         |
+
 ## CI/CD Pipeline
 
-GitHub Actions (`.github/workflows/ci.yml`) runs two jobs on push to `main` and on pull requests:
+GitHub Actions (`.github/workflows/ci.yml`) runs three jobs on push to `main` or `develop`, on pull requests to those branches, and on manual dispatch:
 
-| Job      | What it does                                                                                             |
-| :------- | :------------------------------------------------------------------------------------------------------- |
-| backend  | Installs GCC and CMake, configures and builds the engine in Release mode, and runs the full CTest suite. |
-| frontend | Installs Node.js 20 and frontend dependencies, and produces the production Vite build.                   |
+| Job                   | Depends on          | What it does                                                                                                                                                                                 |
+| :-------------------- | :------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Code Quality Checks   | -                   | Formatter checks across the repository (Python and Prettier)                                                                                                                                 |
+| Backend Test & Build  | Code Quality Checks | Installs GCC and CMake, builds the engine in Release mode and runs the full CTest suite, then builds the Docker image and smoke tests the running container against `/api/health`            |
+| Frontend Test & Build | Code Quality Checks | Installs Node.js 20 and the frontend dependencies, runs the Vitest suite with coverage (uploaded as an artifact), type-checks and produces the production Vite build, and uploads the bundle |
 
 ## Design Patterns and Modern C++
 
