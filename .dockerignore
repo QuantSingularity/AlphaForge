@@ -1,0 +1,7 @@
+code/backend/build
+**/build
+**/CMakeCache.txt
+**/CMakeFiles
+**/cmake_install.cmake
+node_modules
+.git
