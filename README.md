@@ -1,6 +1,6 @@
 # AlphaForge
 
-![CI Status](https://img.shields.io/github/actions/workflow/status/quantsingularity/AlphaForge/ci.yml?branch=main&label=CI&logo=github)
+![CI Status](https://img.shields.io/github/actions/workflow/status/quantsingularity/AlphaForge/cicd.yml?branch=main&label=CI&logo=github)
 
 ## Quantitative Trading and Research Platform
 
