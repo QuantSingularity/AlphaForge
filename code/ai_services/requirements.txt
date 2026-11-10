@@ -1,0 +1,6 @@
+# Runtime dependencies of the ai_services package (it also needs ai_models,
+# which lives next to it in this repository)
+-r ../ai_models/requirements.txt
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
