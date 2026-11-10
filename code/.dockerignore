@@ -1,0 +1,19 @@
+# Build context for code/ai_services/Dockerfile (the context is code/).
+# The root .dockerignore belongs to infrastructure/Dockerfile, whose context is
+# the repository root, and is not used here.
+
+# The C++ engine has its own image.
+backend/
+
+# Tests, golden files and local tooling output are not needed at runtime.
+**/tests/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.coverage
+**/coverage.xml
+**/junit.xml
+
+# Trained models and market data are mounted at runtime, never baked in.
+ai_models/artifacts/
+**/*.csv

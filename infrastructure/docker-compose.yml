@@ -6,3 +6,26 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+
+  # The AI service is opt-in, so a plain `docker compose up` still starts only
+  # the engine and web terminal:
+  #
+  #   docker compose -f infrastructure/docker-compose.yml --profile ai up
+  #
+  # It reads market data from code/backend/data (run scripts/fetch_data.py first;
+  # without data it starts, but has nothing to train on) and keeps trained models
+  # in a named volume so they survive restarts.
+  ai_services:
+    profiles: ["ai"]
+    build:
+      context: ../code
+      dockerfile: ai_services/Dockerfile
+    ports:
+      - "8090:8090"
+    volumes:
+      - ../code/backend/data:/data:ro
+      - ai_models:/models
+    restart: unless-stopped
+
+volumes:
+  ai_models:
